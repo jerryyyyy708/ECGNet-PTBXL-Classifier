@@ -1,4 +1,4 @@
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
 import csv
 import torch
 import numpy as np
@@ -10,6 +10,8 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import os
 from torch.optim.lr_scheduler import StepLR
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -32,7 +34,7 @@ def Zscore_norm(data):
     return normalized_data
 
     
-def calculate_metrics(y_true, y_pred_prob):
+def calculate_metrics(y_true, y_pred_prob, test = False, root = ""):
     # Convert probabilities to binary predictions
     y_pred = (y_pred_prob > 0.5).astype(int)
 
@@ -46,6 +48,16 @@ def calculate_metrics(y_true, y_pred_prob):
 
     # Calculate AUC (Area Under the Receiver Operating Characteristic Curve)
     auc = roc_auc_score(y_true, y_pred_prob)  # Note: for AUC, we use y_pred_prob instead of y_pred
+
+    if test:
+        # Plot confusion matrix
+        cm = confusion_matrix(y_true, y_pred)
+        plt.figure(figsize=(8,6))
+        sns.heatmap(cm, annot=True, fmt='g', cmap='Blues', cbar=False)
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title('Confusion Matrix')
+        plt.savefig(os.path.join(root, 'Test_Result.png'), format='png', dpi=300)
 
     return accuracy, precision, recall, f1, auc
 
@@ -139,3 +151,22 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
         print(f"Train: accuracy = {train_accuracy}, Precision = {train_precision}, Recall = {train_recall}, F1 = {train_f1}, AUC = {train_auc}")  
         print(f"Test: accuracy = {val_accuracy}, Precision = {val_precision}, Recall = {val_recall}, F1 = {val_f1}, AUC = {val_auc}")
         SaveCsvForPlot(os.path.join(save_root, f"{csv_name}.csv"), train_acc_plot, train_precision_plot, train_recall_plot, train_f1_plot, train_auc_plot, val_acc_plot, val_precision_plot, val_recall_plot, val_f1_plot, val_auc_plot)
+
+def test(model, test_set, batch_size, root, dev):
+    test_loader = DataLoader(test_set, batch_size = batch_size)
+    model.eval()
+    val_probs_all = []
+    val_labels_all = []
+    with torch.no_grad():
+        for x, y in tqdm(test_loader):
+            x, y = x.to(dev).float(), y.to(dev).to(torch.int64)
+            output=model(x).float()
+            probs = F.softmax(output, dim = 1)
+            val_probs_all.append(probs[:, 1].detach().cpu().numpy())
+            #val_probs = output.cpu().numpy()
+            val_labels_all.append(y.cpu().numpy())
+    
+    val_probs_all = np.concatenate(val_probs_all)
+    val_labels_all = np.concatenate(val_labels_all)
+    val_accuracy, val_precision, val_recall, val_f1, val_auc = calculate_metrics(val_labels_all, np.array(val_probs_all), test = True, root = root)
+    print(f"Test: accuracy = {val_accuracy}, Precision = {val_precision}, Recall = {val_recall}, F1 = {val_f1}, AUC = {val_auc}")
