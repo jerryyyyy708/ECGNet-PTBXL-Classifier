@@ -1,5 +1,4 @@
-from sklearn.metrics import roc_auc_score, f1_score
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import csv
 import torch
 import numpy as np
@@ -33,22 +32,30 @@ def Zscore_norm(data):
     return normalized_data
 
     
-def calculate_metrics(y_true, y_pred_prob, partial = False):
-    # Calculate accuracy
+def calculate_metrics(y_true, y_pred_prob):
+    # Convert probabilities to binary predictions
     y_pred = (y_pred_prob > 0.5).astype(int)
-    accuracy = accuracy_score(y_true, y_pred)
-    macro_auroc = roc_auc_score(y_true, y_pred)
-    micro_f1 = f1_score(y_true, y_pred, average="micro")
-    
-    return accuracy, macro_auroc, micro_f1
 
-def SaveCsvForPlot(filename, train_acc_plot, train_auroc_plot, train_f1_plot, val_acc_plot, val_auroc_plot, val_f1_plot):
-    data = [(a,b,c,d,e,f) for a,b,c,d,e,f in zip(train_acc_plot, train_auroc_plot, train_f1_plot, val_acc_plot, val_auroc_plot, val_f1_plot)]
+    # Calculate accuracy
+    accuracy = accuracy_score(y_true, y_pred)
+
+    # Calculate precision, recall, and F1 score
+    precision = precision_score(y_true, y_pred)
+    recall = recall_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred)
+
+    # Calculate AUC (Area Under the Receiver Operating Characteristic Curve)
+    auc = roc_auc_score(y_true, y_pred_prob)  # Note: for AUC, we use y_pred_prob instead of y_pred
+
+    return accuracy, precision, recall, f1, auc
+
+def SaveCsvForPlot(filename, train_acc_plot, train_precision_plot, train_recall_plot, train_f1_plot, train_auc_plot, val_acc_plot, val_precision_plot, val_recall_plot, val_f1_plot, val_auc_plot):
+    data = [(a,b,c,d,e,f,g,h,i,j) for a,b,c,d,e,f,g,h,i,j in zip(train_acc_plot, train_precision_plot, train_recall_plot, train_f1_plot, train_auc_plot, val_acc_plot, val_precision_plot, val_recall_plot, val_f1_plot, val_auc_plot)]
     with open(filename, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerows(data)
 
-def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_function = nn.CrossEntropyLoss(), optimizer = None, csv_name = "report", save_root = "result", per_save = 10, min_lr = 0.0001, step_size = 10):
+def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_function = nn.CrossEntropyLoss(), optimizer = None, csv_name = "report", save_root = "result", per_save = 10, min_lr = 0.0001, step_size = 20):
     dev = "cuda:0"
     #model = model.to(dev)
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
@@ -59,11 +66,15 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
     scheduler = StepLR(optimizer, step_size=step_size, gamma=0.1)
     
     train_acc_plot = []
-    train_auroc_plot = []
+    train_precision_plot = []
+    train_recall_plot = []
     train_f1_plot = []
+    train_auc_plot = []
     val_acc_plot = []
-    val_auroc_plot = []
+    val_precision_plot = []
+    val_recall_plot = []
     val_f1_plot = []
+    val_auc_plot = []
     best_acc = 0.0
 
     for epoch in range(epochs):
@@ -91,10 +102,12 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
 
         train_probs_all = np.concatenate(train_probs_all)
         train_labels_all = np.concatenate(train_labels_all)
-        train_accuracy, train_macro_auroc, train_micro_f1 = calculate_metrics(train_labels_all, np.array(train_probs_all))
+        train_accuracy, train_precision, train_recall, train_f1, train_auc = calculate_metrics(train_labels_all, np.array(train_probs_all))
         train_acc_plot.append(train_accuracy)
-        train_auroc_plot.append(train_macro_auroc)
-        train_f1_plot.append(train_micro_f1)
+        train_precision_plot.append(train_precision)
+        train_recall_plot.append(train_recall)
+        train_f1_plot.append(train_f1)
+        train_auc_plot.append(train_auc)
         
         model.eval()
         with torch.no_grad():
@@ -108,10 +121,13 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
         
         val_probs_all = np.concatenate(val_probs_all)
         val_labels_all = np.concatenate(val_labels_all)
-        val_accuracy, val_macro_auroc, val_micro_f1 = calculate_metrics(val_labels_all, np.array(val_probs_all))
+        val_accuracy, val_precision, val_recall, val_f1, val_auc = calculate_metrics(val_labels_all, np.array(val_probs_all))
         val_acc_plot.append(val_accuracy)
-        val_auroc_plot.append(val_macro_auroc)
-        val_f1_plot.append(val_micro_f1)
+        val_precision_plot.append(val_precision)
+        val_recall_plot.append(val_recall)
+        val_f1_plot.append(val_f1)
+        val_auc_plot.append(val_auc)
+
         if val_accuracy > best_acc:
             best_acc = val_accuracy
             torch.save(model, os.path.join(save_root, f'{csv_name}_best.pt'))
@@ -120,6 +136,6 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
             torch.save(model, os.path.join(save_root, f'{csv_name}_epoch{epoch+1}.pt'))
             
         print(f"Epoch {epoch+1}:")
-        print(f"Train: accuracy = {train_accuracy}, AUROC = {train_macro_auroc}, F1 = {train_micro_f1}")  
-        print(f"Test: accuracy = {val_accuracy}, AUROC = {val_macro_auroc}, F1 = {val_micro_f1}")
-        SaveCsvForPlot(os.path.join(save_root, f"{csv_name}.csv"), train_acc_plot, train_auroc_plot, train_f1_plot, val_acc_plot, val_auroc_plot, val_f1_plot)
+        print(f"Train: accuracy = {train_accuracy}, Precision = {train_precision}, Recall = {train_recall}, F1 = {train_f1}, AUC = {train_auc}")  
+        print(f"Test: accuracy = {val_accuracy}, Precision = {val_precision}, Recall = {val_recall}, F1 = {val_f1}, AUC = {val_auc}")
+        SaveCsvForPlot(os.path.join(save_root, f"{csv_name}.csv"), train_acc_plot, train_precision_plot, train_recall_plot, train_f1_plot, train_auc_plot, val_acc_plot, val_precision_plot, val_recall_plot, val_f1_plot, val_auc_plot)
