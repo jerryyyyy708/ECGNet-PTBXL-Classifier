@@ -10,14 +10,28 @@ import torch.optim as optim
 from tqdm import tqdm
 import torch.nn.functional as F
 import os
+from torch.optim.lr_scheduler import StepLR
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def l2norm(signal):
+def l2_norm(signal):
     norms = np.linalg.norm(signal, axis=2, keepdims=True)
     norm_signal = signal / norms
     return norm_signal
+
+def minmax_norm(data):
+    min_val = np.min(data, axis=(0,2), keepdims=True)
+    max_val = np.max(data, axis=(0,2), keepdims=True)
+    normalized_data = (data - min_val) / (max_val - min_val)
+    return normalized_data
+
+def Zscore_norm(data):
+    mean = np.mean(data, axis=(0,2), keepdims=True)
+    std = np.std(data, axis=(0,2), keepdims=True)
+    normalized_data = (data - mean) / std
+    return normalized_data
+
     
 def calculate_metrics(y_true, y_pred_prob, partial = False):
     # Calculate accuracy
@@ -34,13 +48,15 @@ def SaveCsvForPlot(filename, train_acc_plot, train_auroc_plot, train_f1_plot, va
         writer = csv.writer(csvfile)
         writer.writerows(data)
 
-def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_function = nn.CrossEntropyLoss(), optimizer = None, csv_name = "report", save_root = "result", per_save = 10):
+def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_function = nn.CrossEntropyLoss(), optimizer = None, csv_name = "report", save_root = "result", per_save = 10, min_lr = 0.0001, step_size = 10):
     dev = "cuda:0"
     #model = model.to(dev)
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
     test_loader = DataLoader(test_set, batch_size = batch_size)
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    scheduler = StepLR(optimizer, step_size=step_size, gamma=0.1)
     
     train_acc_plot = []
     train_auroc_plot = []
@@ -69,6 +85,10 @@ def train(model, train_set, test_set, batch_size, epochs, lr = 1e-2, loss_functi
             train_probs_all.append(probs[:, 1].detach().cpu().numpy())
             train_labels_all.append(y.detach().cpu().numpy())
         
+        scheduler.step()
+        if optimizer.param_groups[0]['lr'] < min_lr:
+            optimizer.param_groups[0]['lr'] = min_lr
+
         train_probs_all = np.concatenate(train_probs_all)
         train_labels_all = np.concatenate(train_labels_all)
         train_accuracy, train_macro_auroc, train_micro_f1 = calculate_metrics(train_labels_all, np.array(train_probs_all))
